@@ -22,8 +22,7 @@ const dassQuestions = [
   { text: "21. Tôi thấy cuộc sống vô nghĩa", type: "D" }
 ];
 
-// Thang đầy đủ DASS-42 — 42 câu, dịch từ bản gốc tiếng Anh, gán đúng nhóm
-// Trầm cảm(D)/Lo âu(A)/Căng thẳng(S) theo đúng bảng khoá chấm điểm chính thức.
+
 const dass42Questions = [
   { text: "1. Tôi thấy mình bực bội vì những chuyện khá nhỏ nhặt", type: "S" },
   { text: "2. Tôi bị khô miệng", type: "A" },

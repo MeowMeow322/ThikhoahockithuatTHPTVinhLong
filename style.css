@@ -2,7 +2,6 @@ body {
   font-family: 'Plus Jakarta Sans', sans-serif;
 }
 
-/* --- 1. MƯỢT MÀ CUỘN TRANG & THANH CUỘN (SCROLLBAR) --- */
 html {
   scroll-behavior: smooth;
 }
@@ -35,7 +34,6 @@ html {
 }
 
 
-/* --- 2. ANIMATION HIỆN CÓ --- */
 @keyframes shake {
   0%, 100% { transform: translateX(0); }
   20%, 60% { transform: translateX(-6px); }
@@ -47,9 +45,6 @@ html {
 }
 
 
-/* --- 3. BỔ SUNG HIỆU ỨNG MƯỢT MÀ (SMOOTH ANIMATIONS) --- */
-
-/* Hiệu ứng xuất hiện khi cuộn tới (dùng kèm với JS Intersection Observer) */
 .reveal {
   opacity: 0;
   transform: translateY(24px);
@@ -63,7 +58,7 @@ html {
   transform: translateY(0);
 }
 
-/* Class hỗ trợ hover mượt cho Card, Button, Modal */
+
 .smooth-hover {
   transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), 
               box-shadow 0.3s ease, 
@@ -79,12 +74,8 @@ html {
   transform: translateY(-1px) scale(0.99);
 }
 
-/* Nút bấm loại bỏ độ trễ trên di động */
+
 button, a, input, select {
   touch-action: manipulation;
 }
 
-/* --- CANVAS NOTE --- */
-/* Kích thước hiển thị thật của #art-canvas được JS tính và gán trực tiếp
-   (canvas.style.width/height) để giữ đúng tỉ lệ ảnh gốc — object-fit không
-   hoạt động đáng tin cậy trên <canvas> ở nhiều trình duyệt. */
