@@ -584,12 +584,15 @@
     });
 
     // ==============================================================
-    // NHẠC NỀN: trộn nhiều bài YouTube phát cùng lúc, mỗi bài có nút phát/dừng và âm lượng riêng.
+    // NHẠC NỀN: phát nhạc YouTube có hàng đợi (bài thêm sau tự phát khi bài trước hết).
+    // Bật "Phát nhiều bài cùng lúc" để trộn nhiều bài, mỗi bài có âm lượng riêng.
     // Dùng YouTube IFrame API, không cần đăng nhập hay API key.
     // ==============================================================
-    const MUSIC_MAX = 5;
+    const MUSIC_MAX = 8;
     const musicTracks = [];
     let ytApiPromise = null;
+    const mixOn = () => !!document.getElementById('music-mix')?.checked;
+    const isActive = (t) => t.status === 'playing' || t.status === 'paused' || t.status === 'loading';
 
     function loadYouTubeApi() {
       if (ytApiPromise) return ytApiPromise;
@@ -621,16 +624,102 @@
       el.classList.toggle('hidden', !text);
     }
 
+    const STATUS = {
+      queued:  ['Hàng đợi', 'Phát ngay'],
+      loading: ['Đang tải', 'Dừng'],
+      playing: ['Đang phát', 'Dừng'],
+      paused:  ['Tạm dừng', 'Phát'],
+      done:    ['Đã phát', 'Phát lại'],
+      error:   ['Không phát được', '']
+    };
+    function setStatus(t, st) {
+      t.status = st;
+      const btn = t.row.querySelector('[data-toggle]');
+      btn.textContent = STATUS[st][1];
+      btn.classList.toggle('hidden', st === 'error');
+      t.row.classList.toggle('opacity-60', st === 'queued' || st === 'done' || st === 'error');
+      refreshMusicUI();
+    }
     function refreshMusicUI() {
+      let n = 0;
+      musicTracks.forEach((t) => {
+        const badge = t.row.querySelector('[data-badge]');
+        badge.textContent = t.status === 'queued' ? `Hàng đợi ${++n}` : STATUS[t.status][0];
+      });
       document.getElementById('music-empty')?.classList.toggle('hidden', musicTracks.length > 0);
       document.getElementById('music-stop-all')?.classList.toggle('hidden', musicTracks.length < 2);
     }
 
+    function errorText(code) {
+      if (code === 100) return 'Video đã bị xóa hoặc để riêng tư.';
+      if (code === 101 || code === 150) return 'Chủ video không cho phát ngoài YouTube. Hãy thử link khác.';
+      if (code === 153) return location.protocol === 'file:'
+        ? 'Hãy mở trang qua địa chỉ https (GitHub Pages) thay vì mở trực tiếp file.'
+        : 'YouTube từ chối phát video này ở trang này. Hãy thử link khác.';
+      if (code === 2) return 'Link video không hợp lệ.';
+      return 'Trình duyệt không phát được video này.';
+    }
+    function destroyPlayer(t) {
+      try { t.player && t.player.destroy(); } catch (_) {}
+      t.player = null;
+      if (t.ifr) { t.ifr.remove(); t.ifr = null; }
+    }
+    function startNext() {
+      if (mixOn() || musicTracks.some(isActive)) return;
+      const next = musicTracks.find((x) => x.status === 'queued');
+      if (next) startTrack(next);
+    }
+    function fail(t, code) {
+      destroyPlayer(t);
+      const err = t.row.querySelector('[data-err]');
+      err.textContent = errorText(code);
+      err.classList.remove('hidden');
+      t.row.querySelector('[data-ext]').classList.remove('hidden');
+      setStatus(t, 'error');
+      startNext();
+    }
+
+    function startTrack(t) {
+      setStatus(t, 'loading');
+      const info = t.info, loop = mixOn();
+      const origin = /^https?:/.test(location.protocol) ? `&origin=${encodeURIComponent(location.origin)}` : '';
+      const base = info.kind === 'video'
+        ? `https://www.youtube.com/embed/${info.id}?${loop ? `loop=1&playlist=${info.id}&` : ''}`
+        : `https://www.youtube.com/embed/videoseries?list=${info.id}&${loop ? 'loop=1&' : ''}`;
+      const ifr = document.createElement('iframe');
+      ifr.src = `${base}enablejsapi=1&autoplay=1&playsinline=1&controls=0${origin}`;
+      ifr.width = 200; ifr.height = 200;
+      ifr.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin'); // tránh lỗi YouTube 153
+      ifr.allow = 'autoplay; encrypted-media';
+      document.getElementById('music-hidden').appendChild(ifr);
+      t.ifr = ifr;
+      loadYouTubeApi().then(() => {
+        if (!musicTracks.includes(t) || t.ifr !== ifr) return;
+        t.player = new YT.Player(ifr, { events: {
+          onReady: (e) => { e.target.setVolume(+t.row.querySelector('[data-vol]').value); e.target.playVideo(); },
+          onStateChange: (e) => {
+            if (e.data === 1) setStatus(t, 'playing');
+            else if (e.data === 2) setStatus(t, 'paused');
+            else if (e.data === 0) { setStatus(t, 'done'); startNext(); }
+          },
+          onError: (e) => fail(t, e.data)
+        }});
+      });
+    }
+
+    // Phát ngay một bài: ở chế độ hàng đợi thì tạm dừng các bài khác
+    function playNow(t) {
+      if (!mixOn()) musicTracks.forEach((o) => {
+        if (o !== t && isActive(o)) { try { o.player && o.player.pauseVideo(); } catch (_) {} }
+      });
+      if (t.player && t.status !== 'queued') { try { if (t.status === 'done') t.player.seekTo(0); t.player.playVideo(); } catch (_) {} }
+      else { destroyPlayer(t); startTrack(t); }
+    }
+
     function addMusicTrack(info, title) {
-      musicMsg('');
-      if (musicTracks.length >= MUSIC_MAX) return musicMsg(`Tối đa ${MUSIC_MAX} bài cùng lúc, hãy xóa bớt một bài.`);
+      if (musicTracks.length >= MUSIC_MAX) return musicMsg(`Tối đa ${MUSIC_MAX} bài trong danh sách, hãy xóa bớt một bài.`);
       const key = info.kind + info.id;
-      if (musicTracks.some(t => t.key === key)) return musicMsg('Bài này đã có trong danh sách.');
+      if (musicTracks.some((t) => t.key === key)) return musicMsg('Bài này đã có trong danh sách.');
 
       const btnCls = 'px-2 py-1 rounded-lg text-[11px] font-semibold border border-teal-200 dark:border-slate-600 text-teal-800 dark:text-teal-200 flex-shrink-0';
       const row = document.createElement('div');
@@ -638,61 +727,44 @@
       row.innerHTML = `
         <div class="flex items-center gap-2">
           <span data-title class="flex-1 min-w-0 truncate text-xs font-semibold text-slate-700 dark:text-slate-200"></span>
-          <button type="button" data-toggle class="${btnCls}">Dừng</button>
+          <button type="button" data-toggle class="${btnCls}"></button>
           <button type="button" data-remove title="Xóa bài này" class="px-1.5 text-base leading-none text-slate-400 hover:text-rose-500">&times;</button>
         </div>
-        <input data-vol type="range" min="0" max="100" value="60" class="w-full accent-teal-600 mt-1.5" aria-label="Âm lượng">
-        <a data-ext href="${info.ext}" target="_blank" rel="noopener noreferrer" class="hidden text-[11px] text-teal-700 dark:text-teal-300 underline">Không phát được? Mở trên YouTube</a>`;
+        <div data-badge class="text-[10px] uppercase font-bold text-teal-600 dark:text-teal-300 mt-1"></div>
+        <input data-vol type="range" min="0" max="100" value="60" class="w-full accent-teal-600 mt-1" aria-label="Âm lượng">
+        <p data-err class="hidden text-[11px] text-rose-500 mt-1"></p>
+        <a data-ext href="${info.ext}" target="_blank" rel="noopener noreferrer" class="hidden text-[11px] text-teal-700 dark:text-teal-300 underline">Mở trên YouTube</a>`;
       const titleEl = row.querySelector('[data-title]');
-      const toggleBtn = row.querySelector('[data-toggle]');
-      const volEl = row.querySelector('[data-vol]');
       titleEl.textContent = title || (info.kind === 'list' ? 'Playlist YouTube' : `Bài ${musicTracks.length + 1}`);
       document.getElementById('music-list').appendChild(row);
 
-      const origin = /^https?:/.test(location.protocol) ? `&origin=${encodeURIComponent(location.origin)}` : '';
-      const base = info.kind === 'video'
-        ? `https://www.youtube.com/embed/${info.id}?loop=1&playlist=${info.id}&`
-        : `https://www.youtube.com/embed/videoseries?list=${info.id}&loop=1&`;
-      const ifr = document.createElement('iframe');
-      ifr.src = `${base}enablejsapi=1&autoplay=1&playsinline=1&controls=0${origin}`;
-      ifr.width = 200; ifr.height = 200;
-      ifr.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin'); // tránh lỗi YouTube 153
-      ifr.allow = 'autoplay; encrypted-media';
-      document.getElementById('music-hidden').appendChild(ifr);
-
-      const track = { key, ifr, row, player: null, playing: false };
+      const track = { key, info, row, ifr: null, player: null, status: 'queued' };
       musicTracks.push(track);
-      refreshMusicUI();
-
-      const setPlaying = (on) => { track.playing = on; toggleBtn.textContent = on ? 'Dừng' : 'Phát'; };
-      setPlaying(true);
+      setStatus(track, 'queued');
 
       if (info.kind === 'video' && !title) {
         fetch('https://www.youtube.com/oembed?format=json&url=' + encodeURIComponent(info.ext))
-          .then(r => r.json()).then(j => { if (j && j.title) titleEl.textContent = j.title; }).catch(() => {});
+          .then((r) => r.json()).then((j) => { if (j && j.title) titleEl.textContent = j.title; }).catch(() => {});
       }
 
-      loadYouTubeApi().then(() => {
-        if (!musicTracks.includes(track)) return;
-        track.player = new YT.Player(ifr, { events: {
-          onReady: (e) => { e.target.setVolume(+volEl.value); e.target.playVideo(); },
-          onStateChange: (e) => { if (e.data === 1) setPlaying(true); else if (e.data === 2) setPlaying(false); },
-          onError: () => { setPlaying(false); row.querySelector('[data-ext]').classList.remove('hidden'); }
-        }});
-      });
-
-      toggleBtn.addEventListener('click', () => {
+      row.querySelector('[data-toggle]').addEventListener('click', () => {
         const pl = track.player;
-        if (!pl || !pl.playVideo) return;
-        if (track.playing) pl.pauseVideo(); else pl.playVideo();
+        if (track.status === 'playing' && pl) pl.pauseVideo();
+        else playNow(track);
       });
-      volEl.addEventListener('input', () => { if (track.player && track.player.setVolume) track.player.setVolume(+volEl.value); });
+      row.querySelector('[data-vol]').addEventListener('input', (e) => {
+        if (track.player && track.player.setVolume) track.player.setVolume(+e.target.value);
+      });
       row.querySelector('[data-remove]').addEventListener('click', () => {
-        try { track.player && track.player.destroy(); } catch (_) {}
-        ifr.remove(); row.remove();
+        const wasActive = isActive(track);
+        destroyPlayer(track); row.remove();
         musicTracks.splice(musicTracks.indexOf(track), 1);
         refreshMusicUI(); musicMsg('');
+        if (wasActive) startNext();
       });
+
+      // Chưa có bài nào đang phát (hoặc bật phát cùng lúc) thì phát luôn, ngược lại vào hàng đợi
+      if (mixOn() || !musicTracks.some((t) => t !== track && isActive(t))) startTrack(track);
     }
 
     function initMusicPlayer() {
@@ -706,19 +778,24 @@
       document.getElementById('music-panel-close')?.addEventListener('click', () => panel.classList.add('hidden'));
 
       document.getElementById('music-preset-lofi')?.addEventListener('click', () => {
+        musicMsg('');
         addMusicTrack({ kind: 'video', id: 'jfKfPfyJRdk', ext: 'https://www.youtube.com/watch?v=jfKfPfyJRdk' }, 'Nhạc nền');
       });
 
+      // Dán một hoặc nhiều link (cách nhau bằng dấu cách hoặc xuống dòng), thêm theo đúng thứ tự
       addBtn?.addEventListener('click', () => {
-        const info = parseYouTube(urlInput.value);
-        if (!info) return musicMsg('Link chưa đúng, hãy dán link video hoặc playlist YouTube.');
-        addMusicTrack(info);
+        musicMsg('');
+        const parts = urlInput.value.split(/\s+/).filter(Boolean);
+        const infos = parts.map(parseYouTube).filter(Boolean);
+        if (!infos.length) return musicMsg('Link chưa đúng, hãy dán link video hoặc playlist YouTube.');
+        infos.forEach((info) => addMusicTrack(info));
+        if (infos.length < parts.length) musicMsg(`Đã bỏ qua ${parts.length - infos.length} link không đúng.`);
         urlInput.value = '';
       });
       urlInput?.addEventListener('keydown', (e) => { if (e.key === 'Enter') addBtn?.click(); });
 
       document.getElementById('music-stop-all')?.addEventListener('click', () => {
-        musicTracks.forEach(t => { try { t.player && t.player.pauseVideo(); } catch (_) {} });
+        musicTracks.forEach((t) => { try { t.player && t.player.pauseVideo(); } catch (_) {} });
       });
       refreshMusicUI();
     }
@@ -1645,7 +1722,10 @@
         <i data-lucide="x" class="w-4 h-4 pointer-events-none"></i>
       </button>
     </div>
-    <p class="text-[11px] text-slate-400 mb-3">Thêm nhiều bài YouTube để nghe cùng lúc, mỗi bài chỉnh âm lượng riêng.</p>
+    <p class="text-[11px] text-slate-400 mb-2">Dán nhiều link YouTube: bài thêm sau sẽ xếp hàng đợi và tự phát khi bài trước kết thúc.</p>
+    <label class="flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400 mb-3 cursor-pointer">
+      <input type="checkbox" id="music-mix" class="accent-teal-600"> Phát nhiều bài cùng lúc (không xếp hàng)
+    </label>
 
     <button id="music-preset-lofi" class="w-full mb-2 py-2 rounded-xl bg-teal-50 dark:bg-slate-800 hover:bg-teal-100 dark:hover:bg-slate-700 text-xs font-semibold text-teal-800 dark:text-teal-200 text-left px-3">
       Phát nhạc
@@ -1969,7 +2049,7 @@
     }
     pre.addEventListener('click', (e) => {
       const m = e.target.closest('[data-mood]');
-      if (m) { moodBefore = +m.dataset.mood; mark(pre, moodBefore); setTimeout(breathe, 250); }
+      if (m) { moodBefore = +m.dataset.mood; mark(pre, moodBefore); setTimeout(moodBefore >= 3 ? closePre : breathe, 250); }
       else if (e.target.closest('[data-skip]')) breathe();
       else if (e.target.closest('[data-skipb]')) closePre();
     });
@@ -2007,6 +2087,43 @@
       return `<svg viewBox="0 0 ${W} ${Hh}" class="w-full">${grid}${line('before', '#94a3b8', true)}${line('after', '#0d9488')}</svg>
         <div class="flex justify-center gap-4 text-[11px] text-slate-500 dark:text-slate-400"><span><b style="color:#94a3b8">- -</b> Trước khi vẽ</span><span><b style="color:#0d9488">—</b> Sau khi vẽ</span></div>`;
     }
+    function dayIdx(t) { return Math.floor((t - new Date(t).getTimezoneOffset() * 60000) / 86400000); }
+    function streaks(all) {
+      const days = [...new Set(all.map(r => dayIdx(r.t)))].sort((a, b) => a - b);
+      let best = 0, run = 0;
+      days.forEach((d, i) => { run = i && d === days[i - 1] + 1 ? run + 1 : 1; best = Math.max(best, run); });
+      let cur = 0;
+      if (days.length && days[days.length - 1] >= dayIdx(Date.now()) - 1) {
+        cur = 1;
+        for (let i = days.length - 2; i >= 0 && days[i] === days[i + 1] - 1; i--) cur++;
+      }
+      return { best, cur };
+    }
+    function badgesHtml(all) {
+      const { best, cur } = streaks(all);
+      const modes = new Set(all.map(r => r.mode).filter(Boolean));
+      const list = [
+        ['Bức tranh đầu tiên', 'Hoàn thành một bức tranh', all.length >= 1],
+        ['Vẽ 5 bức tranh', 'Hoàn thành 5 bức tranh', all.length >= 5],
+        ['Ba ngày liên tiếp', 'Vẽ 3 ngày liên tiếp', best >= 3],
+        ['Thử cả 3 phương pháp', 'Chấm trame, vẽ tự do và tô màu', modes.size >= 3],
+        ['Tâm trạng tốt hơn', 'Tâm trạng tăng sau khi vẽ', all.some(r => r.before && r.after && r.after > r.before)]
+      ];
+      return `<div class="flex justify-between items-baseline mb-2"><span class="text-xs font-semibold">Huy hiệu (${list.filter(b => b[2]).length}/${list.length})</span><span class="text-[11px] text-slate-500 dark:text-slate-400">Chuỗi hiện tại: ${cur} ngày</span></div>
+        <div class="grid grid-cols-2 gap-2 mb-5">${list.map(([n, d, ok]) => `<div class="p-2 rounded-xl border text-[11px] leading-tight ${ok ? 'border-teal-300 bg-teal-50 dark:bg-teal-950/40 dark:border-teal-700 text-teal-800 dark:text-teal-200' : 'border-slate-200 dark:border-slate-700 text-slate-400 opacity-70'}"><div class="font-semibold">${n}</div><div class="mt-0.5">${d}</div></div>`).join('')}</div>`;
+    }
+    function dassChart(rows) {
+      const r = rows.filter(x => x.dass);
+      if (r.length < 2) return '';
+      const W = 320, Hh = 130, px = (i) => 24 + i * (W - 48) / (r.length - 1), py = (v) => 108 - Math.min(v, 42) / 42 * 90;
+      const line = (k, col) => {
+        const pts = r.map((x, i) => [px(i), py(x.dass[k])]);
+        return `<polyline fill="none" stroke="${col}" stroke-width="2" points="${pts.map(q => q.join(',')).join(' ')}"/>` + pts.map(q => `<circle cx="${q[0]}" cy="${q[1]}" r="3" fill="${col}"/>`).join('');
+      };
+      const grid = [0, 14, 28, 42].map(v => `<line x1="14" x2="${W - 8}" y1="${py(v)}" y2="${py(v)}" stroke="#94a3b8" stroke-opacity=".25"/><text x="0" y="${py(v) + 4}" font-size="9" fill="#94a3b8">${v}</text>`).join('');
+      return `<div class="text-xs font-semibold mt-5 mb-1">Điểm DASS theo các lần vẽ</div><svg viewBox="0 0 ${W} ${Hh}" class="w-full">${grid}${line('d', '#818cf8')}${line('a', '#f59e0b')}${line('s', '#f43f5e')}</svg>
+        <div class="flex justify-center gap-3 text-[11px]"><span style="color:#818cf8">Trầm cảm</span><span style="color:#f59e0b">Lo âu</span><span style="color:#f43f5e">Căng thẳng</span></div>`;
+    }
     function gallery(all) {
       const pics = all.filter(r => r.thumb).slice(-9).reverse();
       if (!pics.length) return '';
@@ -2026,7 +2143,7 @@
         <select data-user class="ml-1 text-xs rounded-lg border border-slate-200 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 px-2 py-1"><option value="all">Tất cả</option>${names.map(n => `<option value="${esc(n)}" ${n === histUser ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label>` : '';
       const fmt = (t) => new Date(t).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
       const body = !all.length ? '<p class="text-sm text-slate-500 dark:text-slate-400 py-6 text-center">Chưa có dữ liệu. Hãy hoàn thành một bài vẽ để bắt đầu theo dõi.</p>' :
-        `${picker}<div class="text-xs font-semibold mb-1">Tâm trạng qua các lần vẽ (thang 1 đến 5)</div>${chart(rows)}${gallery(all)}
+        `${picker}${badgesHtml(all)}<div class="text-xs font-semibold mb-1">Tâm trạng qua các lần vẽ (thang 1 đến 5)</div>${chart(rows)}${dassChart(rows)}${gallery(all)}
          <div class="mt-4 space-y-2">${all.slice(-6).reverse().map(r => `
            <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-800 text-xs">
              <div class="flex justify-between font-semibold gap-2"><span class="truncate">${esc(r.name || 'Không rõ tên')}</span><span class="flex-shrink-0">${MODES[r.mode] || 'Vẽ'}</span></div>
@@ -2061,7 +2178,7 @@
         <div id="qr-box" class="bg-white p-3 rounded-2xl border border-slate-200 min-h-[120px] min-w-[120px] flex items-center justify-center"></div>
         <a href="${SITE}" target="_blank" rel="noopener" class="text-[11px] text-teal-700 dark:text-teal-300 break-all text-center underline">${SITE}</a>
       </div>
-      <button type="button" data-close class="${BTN} w-full mt-5">Đóng</button>`);
+      <div class="grid grid-cols-2 gap-2 mt-5"><button type="button" data-tour class="${BTN}">Xem hướng dẫn</button><button type="button" data-close class="${BTN}">Đóng</button></div>`);
     let qrDone = false;
     function openAbout() {
       show(about);
@@ -2074,7 +2191,10 @@
       sc.onerror = () => { $('qr-box').innerHTML = '<span class="text-[11px] text-slate-500">Không tải được mã QR, hãy dùng liên kết bên dưới.</span>'; };
       document.head.appendChild(sc);
     }
-    about.addEventListener('click', (e) => { if (e.target === about || e.target.closest('[data-close]')) hide(about); });
+    about.addEventListener('click', (e) => {
+      if (e.target === about || e.target.closest('[data-close]')) hide(about);
+      else if (e.target.closest('[data-tour]')) { hide(about); if (window.__openTour) window.__openTour(); }
+    });
 
     // Nút Lịch sử và Về dự án ở góc trên bên phải, cạnh nút đổi Sáng/Tối
     const themeBtn = $('btn-theme-toggle');
@@ -2256,9 +2376,30 @@
       const grid = $('ai-result-modal')?.querySelector('.grid-cols-3');
       const rb = document.createElement('button');
       rb.type = 'button'; rb.textContent = 'Xem lại quá trình vẽ';
-      rb.className = 'w-full mt-2 ' + B;
+      rb.className = B;
       rb.addEventListener('click', openReplay);
-      grid?.after(rb);
+      const sb = document.createElement('button');
+      sb.type = 'button'; sb.textContent = 'Chia sẻ tranh'; sb.className = B;
+      sb.addEventListener('click', () => {
+        snap();
+        cv.toBlob(async (blob) => {
+          if (!blob) return;
+          const file = new File([blob], 'Tranh của tôi.png', { type: 'image/png' });
+          const text = 'Mình vừa vẽ tranh trên trang Thi Khoa học kỹ thuật THPT Vĩnh Long: https://meowmeow322.github.io/ThikhoahockithuatTHPTVinhLong/';
+          try {
+            if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], text }); return; }
+          } catch (e) { if (e && e.name === 'AbortError') return; }
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob); a.download = file.name; a.click();
+          setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+          sb.textContent = 'Đã lưu ảnh về máy';
+          setTimeout(() => { sb.textContent = 'Chia sẻ tranh'; }, 2500);
+        }, 'image/png');
+      });
+      const row = document.createElement('div');
+      row.className = 'grid grid-cols-2 gap-2 mt-2';
+      row.append(rb, sb);
+      grid?.after(row);
     }
 
     // ----- Chế độ cài ứng dụng và offline (chỉ chạy khi trang được mở qua http/https) -----
@@ -2335,6 +2476,78 @@
       img.onerror = () => { URL.revokeObjectURL(url); alert('Không đọc được ảnh này. Bạn thử ảnh định dạng JPG hoặc PNG nhé.'); };
       img.src = url;
     });
+  })();
+  </script>
+
+  <script>
+  // ===== Nhắc nghỉ ngơi sau khi vẽ lâu và hướng dẫn cho người mới =====
+  (() => {
+    const $ = (id) => document.getElementById(id);
+    const REST_MIN = 15;
+    const st = document.createElement('style');
+    st.textContent = '#rest-toast:not(.hidden){animation:pop .35s ease}';
+    document.head.appendChild(st);
+
+    // ----- Nhắc nghỉ -----
+    const toast = document.createElement('div');
+    toast.id = 'rest-toast';
+    toast.className = 'hidden fixed bottom-6 left-0 right-0 mx-auto z-[65] w-[calc(100%-2rem)] max-w-sm bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-teal-200 dark:border-slate-700 p-4 text-sm text-slate-700 dark:text-slate-200';
+    toast.innerHTML = `<p>Bạn đã vẽ khoảng ${REST_MIN} phút rồi. Uống chút nước và nhìn ra xa vài giây nhé.</p>
+      <button type="button" class="mt-3 px-4 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold">Đã hiểu</button>`;
+    document.body.appendChild(toast);
+    let restTimer = null, hideTimer = null;
+    const hideToast = () => { clearTimeout(hideTimer); toast.classList.add('hidden'); };
+    toast.querySelector('button').addEventListener('click', hideToast);
+
+    const wrap = (name, fn) => {
+      const o = window[name]; if (typeof o !== 'function') return;
+      window[name] = function (...a) { fn(); return o.apply(this, a); };
+    };
+    wrap('initCanvas', () => {
+      hideToast(); clearTimeout(restTimer);
+      restTimer = setTimeout(() => {
+        if ($('screen-canvas').classList.contains('hidden')) return;
+        toast.classList.remove('hidden');
+        hideTimer = setTimeout(hideToast, 20000);
+      }, REST_MIN * 60 * 1000);
+    });
+    wrap('openAIResult', () => { clearTimeout(restTimer); hideToast(); });
+
+    // ----- Hướng dẫn lần đầu -----
+    const STEPS = [
+      ['Chào mừng bạn', 'Nhập tên, làm bài đánh giá ngắn để biết mức căng thẳng của mình, rồi chọn cách vẽ phù hợp.'],
+      ['Chọn tranh hoặc tải ảnh của bạn', 'Có nhiều tranh mẫu để tô màu. Bạn cũng có thể bấm "Tải ảnh lên" để tô ảnh của riêng mình.'],
+      ['Phóng to để tô chi tiết', 'Lăn con lăn chuột hoặc dùng hai ngón tay để phóng to. Bật nút bàn tay để kéo tranh, dùng thùng sơn để tô cả mảng.'],
+      ['Nghe nhạc khi vẽ', 'Bấm nút tròn ở góc dưới bên phải để thêm nhiều bài YouTube và nghe cùng lúc, chỉnh âm lượng riêng từng bài.'],
+      ['Theo dõi tiến bộ', 'Nút đồng hồ ở góc trên bên phải lưu lịch sử, biểu đồ tâm trạng, tranh đã vẽ và huy hiệu của bạn.']
+    ];
+    const tour = document.createElement('div');
+    tour.id = 'tour-modal';
+    tour.className = 'fx-modal hidden fixed inset-0 z-[80] flex items-center justify-center bg-black/50 p-4';
+    tour.innerHTML = `<div class="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl max-w-sm w-full p-6 text-slate-700 dark:text-slate-200">
+      <div id="tour-dots" class="flex justify-center gap-1.5 mb-4"></div>
+      <h3 id="tour-title" class="font-bold text-teal-950 dark:text-teal-100 text-base mb-2 text-center"></h3>
+      <p id="tour-text" class="text-sm leading-relaxed text-center min-h-[5rem]"></p>
+      <div class="flex items-center justify-between mt-4">
+        <button type="button" id="tour-skip" class="text-xs text-slate-400 underline">Bỏ qua</button>
+        <button type="button" id="tour-next" class="px-5 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold">Tiếp</button>
+      </div></div>`;
+    document.body.appendChild(tour);
+    let step = 0;
+    const render = () => {
+      $('tour-title').textContent = STEPS[step][0];
+      $('tour-text').textContent = STEPS[step][1];
+      $('tour-dots').innerHTML = STEPS.map((_, i) => `<span class="h-1.5 rounded-full ${i === step ? 'w-5 bg-teal-600' : 'w-1.5 bg-slate-300 dark:bg-slate-600'}"></span>`).join('');
+      $('tour-next').textContent = step === STEPS.length - 1 ? 'Bắt đầu' : 'Tiếp';
+      $('tour-skip').classList.toggle('invisible', step === STEPS.length - 1);
+    };
+    const closeTour = () => { tour.classList.add('hidden'); try { localStorage.setItem('mindart_tour', '1'); } catch (_) {} };
+    $('tour-next').addEventListener('click', () => { if (step >= STEPS.length - 1) closeTour(); else { step++; render(); } });
+    $('tour-skip').addEventListener('click', closeTour);
+    window.__openTour = () => { step = 0; render(); tour.classList.remove('hidden'); };
+    let seen = false;
+    try { seen = !!localStorage.getItem('mindart_tour'); } catch (_) {}
+    if (!seen) setTimeout(window.__openTour, 700);
   })();
   </script>
 </body>
