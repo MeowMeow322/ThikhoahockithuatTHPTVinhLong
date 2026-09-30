@@ -1360,6 +1360,7 @@
       isDrawing = true;
       ctx.beginPath();
       ctx.moveTo(pos.x, pos.y);
+      if (window.__symStart) window.__symStart(pos);
       strokeCount++;
       updateAI();
     }
@@ -1386,6 +1387,7 @@
         ctx.strokeStyle = currentTool === 'eraser' ? '#ffffff' : currentColor;
         ctx.lineTo(pos.x, pos.y);
         ctx.stroke();
+        if (window.__symDraw) window.__symDraw(pos);
       }
     }
 
@@ -1966,7 +1968,7 @@
     const MODES = { trame: 'Chấm trame', doodle: 'Vẽ tự do', coloring: 'Tô màu' };
     const SITE = 'https://meowmeow322.github.io/ThikhoahockithuatTHPTVinhLong/';
     const KEY = 'mindart_history';
-    let moodBefore = null, preDone = false, dass = null, lastIdx = -1, timers = [], histUser = null;
+    let moodBefore = null, preDone = false, dass = null, lastIdx = -1, timers = [], histUser = null, histCur = [];
     const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
     const st = document.createElement('style');
@@ -2061,6 +2063,17 @@
     after.className = 'mb-5';
     after.innerHTML = `<div class="text-xs font-semibold text-slate-600 dark:text-slate-300">Sau khi vẽ, bạn cảm thấy thế nào?</div>${moodBtns()}<p id="mood-after-msg" class="hidden text-xs mt-2 text-teal-700 dark:text-teal-300 leading-relaxed"></p>`;
     aiModal?.querySelector('.grid-cols-3')?.before(after);
+    const noteBox = document.createElement('div');
+    noteBox.className = 'mb-5';
+    noteBox.innerHTML = `<label class="text-xs font-semibold text-slate-600 dark:text-slate-300" for="diary-note">Nhật ký một dòng (không bắt buộc)</label>
+      <textarea id="diary-note" rows="2" maxlength="140" placeholder="Hôm nay mình cảm thấy..." class="mt-2 w-full text-xs rounded-xl border border-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 px-3 py-2"></textarea>`;
+    after.after(noteBox);
+    let noteTimer = null;
+    noteBox.querySelector('textarea').addEventListener('input', (e) => {
+      clearTimeout(noteTimer);
+      const v = e.target.value.trim();
+      noteTimer = setTimeout(() => { const h = load(); if (h[lastIdx]) { h[lastIdx].note = v; store(h); } }, 400);
+    });
     after.addEventListener('click', (e) => {
       const b = e.target.closest('[data-mood]'); if (!b) return;
       const v = +b.dataset.mood, h = load();
@@ -2124,6 +2137,49 @@
       return `<div class="text-xs font-semibold mt-5 mb-1">Điểm DASS theo các lần vẽ</div><svg viewBox="0 0 ${W} ${Hh}" class="w-full">${grid}${line('d', '#818cf8')}${line('a', '#f59e0b')}${line('s', '#f43f5e')}</svg>
         <div class="flex justify-center gap-3 text-[11px]"><span style="color:#818cf8">Trầm cảm</span><span style="color:#f59e0b">Lo âu</span><span style="color:#f43f5e">Căng thẳng</span></div>`;
     }
+    // ---- Báo cáo in ra giấy hoặc lưu thành PDF ----
+    const repEl = document.createElement('div');
+    repEl.id = 'report-print';
+    document.body.appendChild(repEl);
+    const repStyle = document.createElement('style');
+    repStyle.textContent = '#report-print{display:none}@media print{body>*:not(#report-print){display:none!important}#report-print{display:block!important;background:#fff}html,body{background:#fff!important}#report-print,#report-print div,#report-print p,#report-print span,#report-print td,#report-print th{color:#111}#report-print *{-webkit-print-color-adjust:exact;print-color-adjust:exact}@page{margin:12mm}}';
+    document.head.appendChild(repStyle);
+    function reportHtml(all, who) {
+      const fmt = (t) => new Date(t).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const avg = (k) => { const v = all.map(r => r[k]).filter(Boolean); return v.length ? (v.reduce((a, b) => a + b, 0) / v.length).toFixed(1) : '?'; };
+      const last = [...all].reverse().find(r => r.dass);
+      const { best } = streaks(all);
+      const days = new Set(all.map(r => dayIdx(r.t))).size;
+      const box = (v, l) => `<div style="border:1px solid #99f6e4;background:#f0fdfa;border-radius:10px;padding:10px;text-align:center"><div style="font-size:20px;font-weight:700">${v}</div><div style="font-size:11px;color:#555">${l}</div></div>`;
+      const td = 'padding:5px;border:1px solid #ddd';
+      const pics = all.filter(r => r.thumb).slice(-6);
+      return `<div style="max-width:720px;margin:0 auto;font-family:'Plus Jakarta Sans',Arial,sans-serif">
+        <div style="background:#0f766e;padding:16px 20px;border-radius:12px;margin-bottom:14px">
+          <div style="font-size:20px;font-weight:700;color:#fff">BÁO CÁO TRỊ LIỆU BẰNG HỘI HỌA</div>
+          <div style="font-size:12px;color:#ccfbf1;margin-top:4px">Trường THPT Vĩnh Long · Thi Khoa học kỹ thuật</div>
+          <div style="font-size:12px;color:#ccfbf1;margin-top:2px">Người dùng: ${esc(who)} · Xuất ngày ${new Date().toLocaleDateString('vi-VN')}</div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">
+          ${box(all.length, 'Số lần vẽ')}${box(days, 'Số ngày vẽ')}${box(avg('before') + ' → ' + avg('after'), 'Tâm trạng trung bình (trước → sau)')}${box(best, 'Chuỗi ngày dài nhất')}
+        </div>
+        ${last ? `<div style="font-size:12px;margin-bottom:10px">Điểm DASS gần nhất (thang 0 đến 42): Trầm cảm <b>${last.dass.d}</b>, Lo âu <b>${last.dass.a}</b>, Căng thẳng <b>${last.dass.s}</b>.</div>` : ''}
+        <div style="font-size:12px;font-weight:700;margin-bottom:2px">Tâm trạng qua các lần vẽ (thang 1 đến 5)</div>${chart(all.slice(-10))}${dassChart(all.slice(-10))}
+        ${pics.length ? `<div style="font-size:12px;font-weight:700;margin:12px 0 6px">Một số bức tranh đã vẽ</div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">${pics.map(r => `<div style="break-inside:avoid"><img src="${r.thumb}" style="width:100%;border:1px solid #ddd;border-radius:8px;background:#fff"><div style="font-size:10px;color:#555;margin-top:2px">${fmt(r.t)} · ${MODES[r.mode] || 'Vẽ'}${r.before && r.after ? ` · tâm trạng ${r.before}→${r.after}` : ''}</div>${r.note ? `<div style="font-size:10px;font-style:italic">“${esc(r.note)}”</div>` : ''}</div>`).join('')}</div>` : ''}
+        <div style="font-size:12px;font-weight:700;margin:14px 0 6px">Nhật ký các lần vẽ gần đây</div>
+        <table style="width:100%;border-collapse:collapse;font-size:11px">
+          <tr style="background:#f0fdfa"><th style="text-align:left;${td}">Thời gian</th><th style="text-align:left;${td}">Người dùng</th><th style="text-align:left;${td}">Phương pháp</th><th style="${td}">Tâm trạng</th><th style="text-align:left;${td}">Ghi chú</th></tr>
+          ${all.slice(-15).reverse().map(r => `<tr style="break-inside:avoid"><td style="${td}">${fmt(r.t)}</td><td style="${td}">${esc(r.name || 'Không rõ tên')}</td><td style="${td}">${MODES[r.mode] || 'Vẽ'}</td><td style="${td};text-align:center">${r.before || '?'} → ${r.after || '?'}</td><td style="${td}">${esc(r.note || '')}</td></tr>`).join('')}
+        </table>
+        <div style="font-size:10px;color:#666;margin-top:14px">Kết quả chỉ mang tính tham khảo, không thay thế đánh giá của chuyên gia tâm lý. Dữ liệu được lưu trên thiết bị của người dùng.</div>
+      </div>`;
+    }
+    function printReport() {
+      if (!histCur.length) return;
+      repEl.innerHTML = reportHtml(histCur, histUser === 'all' ? 'Tất cả' : histUser);
+      window.addEventListener('afterprint', () => { repEl.innerHTML = ''; }, { once: true });
+      setTimeout(() => window.print(), 250);
+    }
     function gallery(all) {
       const pics = all.filter(r => r.thumb).slice(-9).reverse();
       if (!pics.length) return '';
@@ -2139,6 +2195,7 @@
       if (histUser === null) histUser = (typeof userName === 'string' && names.includes(userName)) ? userName : 'all';
       if (histUser !== 'all' && !names.includes(histUser)) histUser = 'all';
       const all = histUser === 'all' ? full : full.filter(r => r.name === histUser), rows = all.slice(-10);
+      histCur = all;
       const picker = names.length > 1 ? `<label class="block text-[11px] text-slate-500 dark:text-slate-400 mb-3">Xem lịch sử của
         <select data-user class="ml-1 text-xs rounded-lg border border-slate-200 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 px-2 py-1"><option value="all">Tất cả</option>${names.map(n => `<option value="${esc(n)}" ${n === histUser ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label>` : '';
       const fmt = (t) => new Date(t).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
@@ -2148,15 +2205,16 @@
            <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-800 text-xs">
              <div class="flex justify-between font-semibold gap-2"><span class="truncate">${esc(r.name || 'Không rõ tên')}</span><span class="flex-shrink-0">${MODES[r.mode] || 'Vẽ'}</span></div>
              <div class="text-[11px] text-slate-400 dark:text-slate-500">${fmt(r.t)}</div>
-             <div class="text-slate-500 dark:text-slate-400 mt-0.5">Tâm trạng: ${r.before || '?'} → ${r.after || '?'}${r.dass ? ` · Trầm cảm ${r.dass.d}, Lo âu ${r.dass.a}, Căng thẳng ${r.dass.s}` : ''}</div>
+             <div class="text-slate-500 dark:text-slate-400 mt-0.5">Tâm trạng: ${r.before || '?'} → ${r.after || '?'}${r.dass ? ` · Trầm cảm ${r.dass.d}, Lo âu ${r.dass.a}, Căng thẳng ${r.dass.s}` : ''}</div>${r.note ? `<div class="mt-1 italic text-slate-600 dark:text-slate-300">“${esc(r.note)}”</div>` : ''}
            </div>`).join('')}</div>`;
       hist.firstElementChild.innerHTML = `<h3 class="${H}">Lịch sử của bạn</h3>
         <p class="text-[11px] text-slate-400 mb-3">Dữ liệu chỉ lưu trên thiết bị này, không gửi đi đâu cả.</p>${body}
-        <div class="flex gap-2 mt-5"><button type="button" data-close class="${BTN} flex-1">Đóng</button>${full.length ? `<button type="button" data-clear class="${BTN} flex-1 !text-red-500">${histUser === 'all' ? 'Xóa tất cả' : 'Xóa lịch sử người này'}</button>` : ''}</div>`;
+        ${all.length ? `<button type="button" data-report class="${BTN} w-full mt-4">Xuất báo cáo (lưu thành PDF)</button>` : ''}<div class="flex gap-2 mt-3"><button type="button" data-close class="${BTN} flex-1">Đóng</button>${full.length ? `<button type="button" data-clear class="${BTN} flex-1 !text-red-500">${histUser === 'all' ? 'Xóa tất cả' : 'Xóa lịch sử người này'}</button>` : ''}</div>`;
       show(hist);
     }
     hist.addEventListener('click', (e) => {
       if (e.target === hist || e.target.closest('[data-close]')) hide(hist);
+      else if (e.target.closest('[data-report]')) printReport();
       else if (e.target.closest('[data-clear]') && confirm(histUser === 'all' ? 'Xóa toàn bộ lịch sử trên thiết bị này?' : `Xóa lịch sử của ${histUser}?`)) {
         store(histUser === 'all' ? [] : load().filter(r => r.name !== histUser)); openHistory();
       }
@@ -2237,6 +2295,7 @@
       lastIdx = Math.min(h.length, 50) - 1;
       moodBefore = null; preDone = false;
       mark(after, 0);
+      const dn = $('diary-note'); if (dn) dn.value = '';
       $('mood-after-msg').classList.add('hidden');
     });
   })();
@@ -2548,6 +2607,154 @@
     let seen = false;
     try { seen = !!localStorage.getItem('mindart_tour'); } catch (_) {}
     if (!seen) setTimeout(window.__openTour, 700);
+  })();
+  </script>
+
+  <script>
+  // ===== Vẽ đối xứng, âm thanh thiên nhiên và câu nói mỗi ngày =====
+  (() => {
+    const $ = (id) => document.getElementById(id);
+
+    // ----- Vẽ đối xứng (chỉ ở chế độ Vẽ tự do) -----
+    const brushWrap = $('brush-size-wrap');
+    let N = 0, prev = null, sel = null, symBox = null;
+    if (brushWrap) {
+      symBox = document.createElement('div');
+      symBox.id = 'sym-wrap';
+      symBox.className = 'hidden flex items-center space-x-1';
+      symBox.innerHTML = `<label for="sym-select" class="text-[11px] text-slate-500 dark:text-slate-400">Đối xứng</label>
+        <select id="sym-select" class="text-xs rounded-lg border border-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 px-1.5 py-1">
+          <option value="0">Tắt</option><option value="4">4 trục</option><option value="6">6 trục</option><option value="8">8 trục</option></select>`;
+      brushWrap.after(symBox);
+      sel = $('sym-select');
+      sel.addEventListener('change', () => { N = +sel.value; });
+    }
+    window.__symStart = (pos) => { prev = { x: pos.x, y: pos.y }; };
+    window.__symDraw = (pos) => {
+      const from = prev; prev = { x: pos.x, y: pos.y };
+      if (!N || !from || activeArtMode !== 'doodle' || currentTool === 'bucket') return;
+      const cx = canvas.width / 2, cy = canvas.height / 2;
+      const copies = (p) => {
+        const dx = p.x - cx, dy = p.y - cy, out = [];
+        for (let k = 0; k < N; k++) {
+          const a = 2 * Math.PI * k / N, c = Math.cos(a), s = Math.sin(a);
+          out.push([cx + dx * c - dy * s, cy + dx * s + dy * c]);     // xoay
+          out.push([cx - dx * c - dy * s, cy - dx * s + dy * c]);     // xoay rồi lật gương
+        }
+        return out;
+      };
+      const A = copies(from), B = copies(pos);
+      for (let i = 1; i < A.length; i++) {                            // bản 0 là nét gốc, đã được vẽ
+        ctx.beginPath(); ctx.moveTo(A[i][0], A[i][1]); ctx.lineTo(B[i][0], B[i][1]); ctx.stroke();
+      }
+      ctx.beginPath(); ctx.moveTo(pos.x, pos.y);                       // trả đường vẽ chính về đúng điểm hiện tại
+    };
+    const oInit = window.initCanvas;
+    if (typeof oInit === 'function') {
+      window.initCanvas = function (...a) {
+        const r = oInit.apply(this, a);
+        if (symBox) { symBox.classList.toggle('hidden', activeArtMode !== 'doodle'); sel.value = '0'; N = 0; }
+        return r;
+      };
+    }
+
+    // ----- Hộp nhận xét của AI: cho phép cuộn khi màn hình thấp -----
+    const aiBox = $('ai-result-modal')?.firstElementChild;
+    if (aiBox) aiBox.classList.add('max-h-[92vh]', 'overflow-y-auto');
+
+    // ----- Âm thanh thiên nhiên tạo ngay trong trình duyệt (không cần mạng) -----
+    const panel = $('music-panel');
+    if (panel) {
+      const SOUNDS = [['rain', 'Tiếng mưa'], ['waves', 'Sóng biển'], ['wind', 'Gió']];
+      const sec = document.createElement('div');
+      sec.className = 'mt-4 pt-3 border-t border-slate-200 dark:border-slate-700';
+      sec.innerHTML = `<div class="text-[11px] font-semibold text-slate-600 dark:text-slate-300 mb-2">Âm thanh thiên nhiên</div>` +
+        SOUNDS.map(([k, n]) => `<div class="flex items-center gap-2 mb-2">
+          <button type="button" data-snd="${k}" aria-pressed="false" class="w-24 px-2 py-1.5 rounded-lg text-[11px] font-semibold border border-teal-200 dark:border-slate-600 text-teal-800 dark:text-teal-200">${n}</button>
+          <input type="range" data-svol="${k}" min="0" max="100" value="50" class="flex-1 min-w-0 accent-teal-600" aria-label="Âm lượng ${n}"></div>`).join('');
+      panel.appendChild(sec);
+
+      let ac = null, white = null, brown = null;
+      const on = {}, vol = { rain: .5, waves: .5, wind: .5 };
+      function audio() {
+        if (ac) return ac;
+        ac = new (window.AudioContext || window.webkitAudioContext)();
+        const len = ac.sampleRate * 4;
+        white = ac.createBuffer(1, len, ac.sampleRate); brown = ac.createBuffer(1, len, ac.sampleRate);
+        const w = white.getChannelData(0), b = brown.getChannelData(0);
+        let last = 0;
+        for (let i = 0; i < len; i++) { const r = Math.random() * 2 - 1; w[i] = r; last = (last + 0.02 * r) / 1.02; b[i] = last * 3.5; }
+        return ac;
+      }
+      const filt = (a, type, f, q) => { const n = a.createBiquadFilter(); n.type = type; n.frequency.value = f; if (q) n.Q.value = q; return n; };
+      function build(kind) {
+        const a = audio(), g = a.createGain(), src = a.createBufferSource(), extra = [];
+        g.gain.value = 0; g.connect(a.destination); src.loop = true;
+        if (kind === 'rain') {
+          src.buffer = white; const hp = filt(a, 'highpass', 900), lp = filt(a, 'lowpass', 8000);
+          src.connect(hp); hp.connect(lp); lp.connect(g);
+        } else if (kind === 'waves') {
+          src.buffer = brown; const lp = filt(a, 'lowpass', 900), amp = a.createGain(), lfo = a.createOscillator(), depth = a.createGain();
+          amp.gain.value = 0.6; lfo.frequency.value = 0.11; depth.gain.value = 0.45;
+          lfo.connect(depth); depth.connect(amp.gain); src.connect(lp); lp.connect(amp); amp.connect(g); lfo.start(); extra.push(lfo);
+        } else {
+          src.buffer = white; const bp = filt(a, 'bandpass', 550, 0.9), lfo = a.createOscillator(), depth = a.createGain();
+          lfo.frequency.value = 0.07; depth.gain.value = 260;
+          lfo.connect(depth); depth.connect(bp.frequency); src.connect(bp); bp.connect(g); lfo.start(); extra.push(lfo);
+        }
+        src.start();
+        return { src, g, extra };
+      }
+      const level = (k) => vol[k] * (k === 'rain' ? 0.5 : 0.8);
+      sec.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-snd]'); if (!btn) return;
+        const k = btn.dataset.snd, a = audio();
+        if (a.state === 'suspended') a.resume();
+        if (on[k]) {
+          const n = on[k]; on[k] = null;
+          n.g.gain.setTargetAtTime(0, a.currentTime, 0.15);
+          setTimeout(() => { try { n.src.stop(); n.extra.forEach(o => o.stop()); n.g.disconnect(); } catch (_) {} }, 800);
+        } else {
+          on[k] = build(k);
+          on[k].g.gain.setTargetAtTime(level(k), a.currentTime, 0.3);
+        }
+        const isOn = !!on[k];
+        btn.setAttribute('aria-pressed', String(isOn));
+        ['bg-teal-600', 'text-white', 'border-teal-600'].forEach(c => btn.classList.toggle(c, isOn));
+      });
+      sec.addEventListener('input', (e) => {
+        const r = e.target.closest('[data-svol]'); if (!r) return;
+        const k = r.dataset.svol; vol[k] = r.value / 100;
+        if (on[k]) on[k].g.gain.setTargetAtTime(level(k), ac.currentTime, 0.1);
+      });
+    }
+
+    // ----- Câu nói tích cực mỗi ngày ở màn chào -----
+    const QUOTES = [
+      'Không cần vẽ đẹp, chỉ cần vẽ bằng sự bình yên.',
+      'Mỗi nét cọ nhẹ nhàng là một hơi thở chậm lại.',
+      'Hôm nay khó khăn không có nghĩa là ngày mai cũng vậy.',
+      'Bạn đã cố gắng nhiều hơn bạn nghĩ.',
+      'Nghỉ ngơi cũng là một cách tiến về phía trước.',
+      'Cảm xúc nào cũng được phép có mặt, và cũng sẽ qua đi.',
+      'Một bức tranh dang dở vẫn là một bức tranh đáng trân trọng.',
+      'Hãy đối xử với bản thân như cách bạn đối xử với người bạn thân.',
+      'Màu sắc bạn chọn hôm nay nói lên điều bạn đang cần.',
+      'Chậm lại một chút, thế giới vẫn đang chờ bạn.',
+      'Mỗi ngày nhỏ bé đều có một điều đáng biết ơn.',
+      'Bạn không cô đơn, luôn có người sẵn sàng lắng nghe.',
+      'Sai một nét cũng không sao, đổi màu là có một nét mới.',
+      'Bình yên bắt đầu từ một hơi thở sâu.'
+    ];
+    const intro = [...document.querySelectorAll('main p')].find(p => p.textContent.includes('Đánh giá sức khỏe tinh thần'));
+    if (intro) {
+      const day = Math.floor((Date.now() - new Date().getTimezoneOffset() * 60000) / 86400000);
+      const q = document.createElement('p');
+      q.id = 'daily-quote';
+      q.className = 'text-xs italic text-teal-700 dark:text-teal-300 mb-6 px-2';
+      q.textContent = 'Câu nói hôm nay: ' + QUOTES[day % QUOTES.length];
+      intro.after(q);
+    }
   })();
   </script>
 </body>
