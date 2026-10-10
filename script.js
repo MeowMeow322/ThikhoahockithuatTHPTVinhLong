@@ -544,7 +544,7 @@ function processDASSResults() {
   if (s >= a && s >= d && s > 14) {
     rec = "Mức độ Căng thẳng (Stress) của bạn khá cao. Phương pháp Vẽ Chấm Trame (Pointillism) sẽ giúp bạn định tâm, hạ nhiệt cảm xúc.";
   } else if (a >= d && a > 7) {
-    rec = "Bạn đang có dấu hiệu Lo âu (Anxiety). Hãy dùng Doodle Art để phóng thích những suy nghĩ miên man ra giấy.";
+    rec = "Bạn đang có dấu hiệu Lo âu (Anxiety). Hãy dùng Vẽ Tự Do ( Doodle Art ) để phóng thích những suy nghĩ miên man ra giấy.";
   } else if (d > 9) {
     rec = "Chỉ số Trầm cảm (Depression) cần sự vỗ về. Tô màu Mandala với các gam màu ấm áp sẽ giúp bạn cân bằng tâm trạng.";
   } else {
@@ -929,7 +929,7 @@ function pickArtStyle(stats) {
   if (activeArtMode === 'doodle') {
     if (variety >= 4) {
       return {
-        name: "Doodle Art đương đại",
+        name: "Vẽ Tự Do ( Doodle Art ) đương đại",
         desc: "Phóng khoáng, nhiều màu sắc và tự do — có chút gì đó của phong cách vẽ đường phố Keith Haring."
       };
     }

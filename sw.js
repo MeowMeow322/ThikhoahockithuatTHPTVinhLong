@@ -1,6 +1,6 @@
 // Service worker: lưu trang và thư viện vào bộ nhớ trình duyệt để mở được khi mất mạng.
 // Đổi số phiên bản (v1 -> v2) mỗi khi cập nhật trang để người dùng nhận bản mới.
-const CACHE = 'mindart-v2';
+const CACHE = 'mindart-v4';
 const CORE = ['./', './index.html', './manifest.webmanifest', './favicon.png', './icon-192.png', './icon-512.png'];
 const SKIP = /youtube\.com|youtu\.be|googlevideo\.com|ytimg\.com/;
 
